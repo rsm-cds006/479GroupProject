@@ -1,0 +1,182 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r}
+#load libraries
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(gridExtra)
+library(ggthemes)
+library(broom)
+library(lfe)
+library(readr)
+
+#import data
+hasstotalmetrics <- read_csv("data/hasstotalmetrics.csv")
+merged_data <- read_csv("data/merged_data.csv")
+```
+
+
+```{r}
+hasstotalmetrics <- hasstotalmetrics %>%
+  select(
+    -c("...16", "...17", "...18", "...19", "...20", 
+       "...21", "...22", "...23", "...24", "...25", "...26")
+  )
+str(hasstotalmetrics)
+write.csv(hasstotalmetrics, "data/hasstotalmetrics.csv", row.names = FALSE)
+```
+
+
+```{r}
+hasstotalmetrics$Mean_ASP <- rowMeans(hasstotalmetrics[,c("Total2020ASP", "Total2021ASP", "Total2022ASP", "Total2023ASP")], na.rm = TRUE)
+hasstotalmetrics$Mean_Dollars <- rowMeans(hasstotalmetrics[,c("Total2020Dollars",
+"Total2021Dollars","Total2022Dollars","Total2023Dollars")], na.rm = TRUE)
+hasstotalmetrics$Mean_Units <- rowMeans(hasstotalmetrics[,c("Total2020Units","Total2021Units",
+"Total2022Units","Total2023Units")], na.rm = TRUE)
+head(hasstotalmetrics)
+write.csv(hasstotalmetrics, "data/hasstotalmetrics.csv", row.names = FALSE)
+```
+```{r}
+long_data <- pivot_longer(hasstotalmetrics, 
+                          cols = c("Total2023ASP", "Mean_ASP"),
+                          names_to = "Variable", 
+                          values_to = "Value")
+
+ggplot(long_data, aes(x = Geography, y = Value, color = Variable, group = Variable)) +
+  geom_line() +
+  labs(title = "Comparison of ASP by Geography",
+       x = "Geography",
+       y = "Value",
+       color = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+
+```{r}
+long_data2 <- pivot_longer(hasstotalmetrics, 
+                          cols = c("ChipotleGuacPrice", "Mean_ASP", "ChipotleProfitMargin"),
+                          names_to = "Variable", 
+                          values_to = "Value")
+
+ggplot(long_data2, aes(x = Geography, y = Value, color = Variable, group = Variable)) +
+  geom_line() +
+  labs(title = "Comparison of Chipotle Guacamole Price and Profit Margin by Geography",
+       x = "Geography",
+       y = "Dollar Price",
+       color = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+geographies <- c("Total U.S.", "California", "Great Lakes", "Midsouth", 
+                 "Northeast", "Plains", "South Central", "Southeast", "West")
+filtered_data <- hasstotalmetrics[hasstotalmetrics$Geography %in% geographies, ]
+print(filtered_data)
+```
+```{r}
+long_data3 <- pivot_longer(filtered_data, 
+                          cols = c("ChipotleGuacPrice", "Mean_ASP", "ChipotleProfitMargin"),
+                          names_to = "Variable", 
+                          values_to = "Value")
+ggplot(long_data3, aes(x = Geography, y = Value, color = Variable, group = Variable)) +
+  geom_line() +
+  labs(title = "Comparison of Chipotle Guacamole Price and Profit Margin by Geography",
+       x = "Geography",
+       y = "Dollar Price",
+       color = "Metric") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+
+```{r}
+filtered_data <- filtered_data %>%
+  mutate(
+    Log_Mean_Dollars = ifelse(Mean_Dollars > 0, log(Mean_Dollars), NA),
+    Log_Mean_Units = ifelse(Mean_Units > 0, log(Mean_Units), NA),
+    Log_Mean_ASP = ifelse(Mean_ASP > 0, log(Mean_ASP), NA),
+    Log_ChipotleGuacPrice = ifelse(ChipotleGuacPrice > 0, log(ChipotleGuacPrice), NA),
+    Log_ChipotleProfitMargin = ifelse(ChipotleProfitMargin > 0, log(ChipotleProfitMargin), NA)
+  )
+filtered_data
+write.csv(filtered_data, "data/hasstotalmetrics.csv", row.names = FALSE)
+```
+
+
+```{r}
+model = lm(Log_Mean_Units ~Log_Mean_Dollars, data = filtered_data )
+tidy(model, conf.int = T)
+
+```
+
+
+```{r}
+cat(paste0("r squared =",round(summary(model)$r.squared,2)))
+```
+```{r}
+# Creating a range of prices from 1.00 to 3.00
+profit_curve_data <- data.frame(prices = seq(1, 3, by = 0.01)) %>%
+  mutate(
+    Log_Mean_Dollars = log(prices),  # Log-transform prices for prediction
+    demand = exp(predict(model, newdata = data.frame(Log_Mean_Dollars = Log_Mean_Dollars))),
+    profit = demand * (prices - 1)  # Calculate profit
+  )
+
+# Find the optimal price (maximizing profit)
+opt_price <- profit_curve_data[which.max(profit_curve_data$profit), "prices"]
+
+print(paste0("Optimal price = $",prettyNum(opt_price,digits = 3)))
+```
+
+
+```{r}
+#create profit curve
+profit_curve_plot <- ggplot(profit_curve_data, aes(x = prices, y = profit)) +
+  geom_line(color = "blue", size = 2) +
+  geom_vline(xintercept = opt_price, linetype = "dashed", color = "red") +
+  theme_minimal() +
+  labs(title = "Implied Price from Model",
+       x = "Prices",
+       y = "Profit")
+
+print(profit_curve_plot)
+```
+
+
+```{r}
+#notes on this:
+#The absence of any decline suggests that within this range, higher prices lead to higher profits without a significant drop in demand. This could imply that the product has low price sensitivity (inelastic demand) within this price range. The optimal price, indicated by the red dashed line, is where the profit curve reaches its maximum. This point suggests that setting the price slightly below $3.00 maximizes profit, taking into account the model's assumptions about cost and demand behavior.The shape of the curve indicates that customers may be relatively insensitive to price increases, perhaps due to the lack of close substitutes or because the product is a necessity. The company could exploit this by increasing prices to increase revenue without significantly harming sales volume.The implied inelasticity suggests that the demand decreases slower than the price increases, which is why profit continues to rise.It's important to note that the model only shows predicted outcomes based on certain assumptions. 
+
+```
+```{r}
+
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
+
+```{r}
+```
+
